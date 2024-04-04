@@ -1,5 +1,5 @@
-
-
+from uuid import UUID
+from langchain.schema.output import ChatGenerationChunk, GenerationChunk
 import streamlit as st
 import os
 from langchain.chat_models import ChatOpenAI
@@ -13,13 +13,12 @@ from langchain.schema.runnable import RunnablePassthrough, RunnableLambda
 from langchain.memory import ConversationBufferMemory
 from langchain.callbacks.base import BaseCallbackHandler
 
-
-st.set_page_config(page_icon="🤖", page_title="GPT")
+st.set_page_config(page_icon="🏠", page_title="GPT")
 memory = ConversationBufferMemory(return_return_messages= True)
-
 
 api_key = st.sidebar.text_input("Your API KEY", type="password")
 os.environ['OPENAI_API_KEY'] = api_key
+
 
 @st.cache_data(show_spinner="Embedding file...")
 def embed_file(file):
@@ -41,20 +40,21 @@ def embed_file(file):
     docs = loader.load_and_split(text_splitter=splitter)
 
     try:
+
       embeddings = OpenAIEmbeddings()
-
-      cached_embeddings = CacheBackedEmbeddings.from_bytes_store(embeddings, cache_dir)
-
-      vectorstore = FAISS.from_documents(docs, cached_embeddings)
-
-      retriever = vectorstore.as_retriever()
-      st.write(retriever)
+  
     except Exception as e:
       error_type = type(e).__name__  # 예외 객체의 클래스 이름을 가져옴
 
       st.write(f"❌ Retriever 생성 실패 - 에러 종류: {error_type}") 
       st.write(f"에러 메세지: {e}")
-      retriever=None
+      return None
+
+    cached_embeddings = CacheBackedEmbeddings.from_bytes_store(embeddings, cache_dir)
+
+    vectorstore = FAISS.from_documents(docs, cached_embeddings)
+
+    retriever = vectorstore.as_retriever()
     return retriever
 
 
@@ -96,13 +96,16 @@ class ChatCallbackHandler(BaseCallbackHandler):
         self.message_box.markdown(self.message)
 
 def invoke_chain(question):
-    result=chain.invoke(question)
-    print("*****", result)
-    memory.save_context({"input":question}, {"output":result.content})
+    try:
+      result=chain.invoke(question)
+      memory.save_context({"input":question}, {"output":result.content})
+    except Exception as e:
+      error_type = type(e).__name__  # 예외 객체의 클래스 이름을 가져옴
+
+      st.write(f"❌ Retriever 생성 실패 - 에러 종류: {error_type}") 
+      st.write(f"에러 메세지: {e}")
+      result=None
     return result
-
-
-
 
 if(api_key):
   llm = ChatOpenAI(
@@ -140,43 +143,32 @@ second, Upload your files on the sidebar
 """
 )
 with st.sidebar:
-  file=""
-  if(api_key):
     file = st.file_uploader(
         "Upload a .txt .pdf or .socx file",
         type=["pdf", "txt", "docx"],
     )
 
-
 # 업로드한 파일을 캐쉬디렉토리에 저장한다.
 if file:
-    try:
-      retriever = embed_file(file)
-      st.write(f"*** {retriever}")
-      if retriever is not None:
-        send_message("I'm ready! Ask away!", "ai", save=False)
-        paint_history()
-        message = st.chat_input("Ask anything about your file...")
-
-        if message:
-            send_message(message, "human")
-            chain = (
-                {
-                    "context": retriever | RunnableLambda(format_docs),
-                    "question": RunnablePassthrough(),
-                }
-                | prompt
-                | llm
-            )
-            with st.chat_message("ai"):
-        
-              response = invoke_chain(message)
-              if response.content == "":
-                 st.session_state["messages"] = []
-
-
-    except:
+    retriever = embed_file(file)
+    if retriever is None:
       st.session_state["messages"] = []
+    else :
+      send_message("I'm ready! Ask away!", "ai", save=False)
+      paint_history()
+      message = st.chat_input("Ask anything about your file...")
 
+      if message:
+          send_message(message, "human")
+          chain = (
+              {
+                  "context": retriever | RunnableLambda(format_docs),
+                  "question": RunnablePassthrough(),
+              }
+              | prompt
+              | llm
+          )
+          with st.chat_message("ai"):
+              response = invoke_chain(message)
 else:
     st.session_state["messages"] = []
