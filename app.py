@@ -23,7 +23,13 @@ os.environ['OPENAI_API_KEY'] = api_key
 @st.cache_data(show_spinner="Embedding file...")
 def embed_file(file):
     file_content = file.read()
-    file_path = f"./.cache/files/{file.name}"
+    # file_path = f"./.cache/files/{file.name}"
+
+    file_dir = f"./.cache/files"
+    file_path = os.path.join(file_dir, file.name)
+    os.makedirs(file_dir, exist_ok=True)
+
+
 
     with open(file_path, "wb") as f:
         f.write(file_content)
