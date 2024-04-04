@@ -48,6 +48,9 @@ def embed_file(file):
     try:
 
       embeddings = OpenAIEmbeddings()
+      cached_embeddings = CacheBackedEmbeddings.from_bytes_store(embeddings, cache_dir)
+
+      vectorstore = FAISS.from_documents(docs, cached_embeddings)
   
     except Exception as e:
       error_type = type(e).__name__  # 예외 객체의 클래스 이름을 가져옴
@@ -56,9 +59,9 @@ def embed_file(file):
       st.write(f"에러 메세지: {e}")
       return None
 
-    cached_embeddings = CacheBackedEmbeddings.from_bytes_store(embeddings, cache_dir)
+    # cached_embeddings = CacheBackedEmbeddings.from_bytes_store(embeddings, cache_dir)
 
-    vectorstore = FAISS.from_documents(docs, cached_embeddings)
+    # vectorstore = FAISS.from_documents(docs, cached_embeddings)
 
     retriever = vectorstore.as_retriever()
     return retriever
