@@ -1,183 +1,166 @@
-from uuid import UUID
-from langchain.schema.output import ChatGenerationChunk, GenerationChunk
-import streamlit as st
 import os
+import json
+import streamlit as st
 from langchain.chat_models import ChatOpenAI
-from langchain.document_loaders import UnstructuredFileLoader
-from langchain.text_splitter import CharacterTextSplitter
-from langchain.embeddings import OpenAIEmbeddings, CacheBackedEmbeddings
-from langchain.vectorstores import FAISS
-from langchain.storage import LocalFileStore
-from langchain.prompts import ChatPromptTemplate
-from langchain.schema.runnable import RunnablePassthrough, RunnableLambda
-from langchain.memory import ConversationBufferMemory
-from langchain.callbacks.base import BaseCallbackHandler
+from langchain.prompts import PromptTemplate
+from langchain.schema import BaseOutputParser, output_parser
 
-st.set_page_config(page_icon="🏠", page_title="GPT")
-memory = ConversationBufferMemory(return_return_messages= True)
+@st.cache_data(show_spinner="퀴즈를 맛있게 굽고 있어요...")
+def run_quiz_chain(*, title, count,  difficulty):
+    chain = prompt | llm
+    return chain.invoke(
+        {
+            "quiz_title": title,
+            "quiz_count": count,
+            "quiz_difficulty": difficulty,
+        }
+    )
 
-api_key = st.sidebar.text_input("Your API KEY", type="password")
+
+st.set_page_config(
+    page_title="QuizGPT| 챌린지",
+    page_icon="🎴",
+)
+
+st.title(" QuizGPT ")
+with st.expander("과제 내용 보기", expanded=True):
+  st.markdown(
+        """
+  QuizGPT를 구현하되 다음 기능을 추가합니다:
+
+  - :white_check_mark: 함수 호출을 사용합니다.
+  - :white_check_mark: 유저가 시험의 난이도를 커스터마이징 할 수 있도록 하고 LLM이 어려운 문제 또는 쉬운 문제를 생성하도록 합니다.
+  - :white_check_mark: 만점이 아닌 경우 유저가 시험을 다시 치를 수 있도록 허용합니다.
+  - :white_check_mark: 만점이면 st.ballons를 사용합니다.
+  - :white_check_mark: 유저가 자체 OpenAI API 키를 사용하도록 허용하고, st.sidebar 내부의 st.input에서 로드합니다.
+  - :white_check_mark: st.sidebar를 사용하여 Streamlit app의 코드와 함께 Github 리포지토리에 링크를 넣습니다.
+    """
+  )
+
+class JsonOutputParser(BaseOutputParser):
+    def parse(self, text):
+        text = text.replace("```", "").replace("json", "")
+        return json.loads(text)
+    
+output_parser = JsonOutputParser()
+
+api_key = st.sidebar.text_input("API KEY", type="password")
+st.session_state["api_key"] = api_key
 os.environ['OPENAI_API_KEY'] = api_key
 
+with st.sidebar:
 
-@st.cache_data(show_spinner="Embedding file...")
-def embed_file(file):
-    file_content = file.read()
-    # file_path = f"./.cache/files/{file.name}"
-
-    file_dir = f"./.cache/files"
-    file_path = os.path.join(file_dir, file.name)
-    os.makedirs(file_dir, exist_ok=True)
-
-
-
-    with open(file_path, "wb") as f:
-        f.write(file_content)
-
-    cache_dir = LocalFileStore(f"./.cache/embeddings/{file.name}")
-
-    splitter = CharacterTextSplitter.from_tiktoken_encoder(
-        separator="\n",
-        chunk_size=600,
-        chunk_overlap=100,
-    )
-    loader = UnstructuredFileLoader(file_path)
-
-    docs = loader.load_and_split(text_splitter=splitter)
-
-    try:
-
-      embeddings = OpenAIEmbeddings()
-      cached_embeddings = CacheBackedEmbeddings.from_bytes_store(embeddings, cache_dir)
-
-      vectorstore = FAISS.from_documents(docs, cached_embeddings)
-  
-    except Exception as e:
-      error_type = type(e).__name__  # 예외 객체의 클래스 이름을 가져옴
-
-      st.write(f"❌ Retriever 생성 실패 - 에러 종류: {error_type}") 
-      st.write(f"에러 메세지: {e}")
-      return None
-
-    # cached_embeddings = CacheBackedEmbeddings.from_bytes_store(embeddings, cache_dir)
-
-    # vectorstore = FAISS.from_documents(docs, cached_embeddings)
-
-    retriever = vectorstore.as_retriever()
-    return retriever
-
-
-def save_messages(message, role):
-    st.session_state["messages"].append({"message": message, "role": role})
-
-
-def send_message(message, role, save=True):
-    with st.chat_message(role):
-        st.markdown(message)
-    if save:
-        save_messages(message, role)
-
-
-def paint_history():
-    for message in st.session_state["messages"]:
-        send_message(
-            message["message"],
-            message["role"],
-            save=False,
-        )
-
-
-def format_docs(docs):
-    return "\n\n".join(document.page_content for document in docs)
-
-
-class ChatCallbackHandler(BaseCallbackHandler):
-    message = ""
-
-    def on_llm_start(self, *args, **kwargs):
-        self.message_box = st.empty()
-
-    def on_llm_end(self, *args, **kwargs):
-        save_messages(self.message, "ai")
-
-    def on_llm_new_token(self, token: str, *args, **kwargs):
-        self.message += token
-        self.message_box.markdown(self.message)
-
-def invoke_chain(question):
-    try:
-      result=chain.invoke(question)
-      memory.save_context({"input":question}, {"output":result.content})
-    except Exception as e:
-      error_type = type(e).__name__  # 예외 객체의 클래스 이름을 가져옴
-
-      st.write(f"❌ Retriever 생성 실패 - 에러 종류: {error_type}") 
-      st.write(f"에러 메세지: {e}")
-      result=None
-    return result
-
-if(api_key):
-  llm = ChatOpenAI(
-      api_key=api_key,
-      temperature=0.1,
-      streaming=True,
-      callbacks=[
-          ChatCallbackHandler(),
-      ],
-  )
-prompt = ChatPromptTemplate.from_messages(
-    [
-        (
-            "system",
-            """
-    Answer the question using Only the following context. If you don't know the answer just say you don't know. DON'T make anything up.
-     context: {context}
-     """,
-        ),
-        ("human", "{question}"),
-    ]
-)
-st.title("Chat-Bot")
-
-st.markdown(
-    """
-Welcome!
-
-Use this chatbot to ask questions to a AI about your files!
-
-first, Input your OPEN_API_KEY.
-
-second, Upload your files on the sidebar
-            
+  st.divider()
+  st.markdown(
+  """
+    Github Link
 """
 )
-with st.sidebar:
-    file = st.file_uploader(
-        "Upload a .txt .pdf or .socx file",
-        type=["pdf", "txt", "docx"],
+
+function = {
+  "name": "create_quiz", 
+  "description":"function that takes list of questions and answers and returns a quiz",
+  "parameters": {
+        "type": "object",
+        "properties": {
+            "questions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "question": {
+                            "type": "string",
+                        },
+                        "answers": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "answer": {
+                                        "type": "string",
+                                    },
+                                    "correct": {
+                                        "type": "boolean",
+                                    },
+                                },
+                                "required": ["answer", "correct"],
+                            },
+                        },
+                    },
+                    "required": ["question", "answers"],
+                },
+            }
+        },
+
+        "required":["questions"],
+},
+}
+
+
+
+
+prompt = PromptTemplate.from_template("""Make a quiz about {quiz_title}
+                                      
+            Number of Questions: {quiz_count}
+            Difficulty Level: Level-{quiz_difficulty}/10""")
+
+st.session_state["quiz_title"]=None
+
+if not api_key:
+  st.error("⚠️  Please Enter Your :red[OpenAI API Key]")
+else:
+    llm = ChatOpenAI(temperature=0.1).bind(
+    function_call = {
+    "name": "create_quiz"
+    },
+    functions=[
+    function
+    ]
     )
 
-# 업로드한 파일을 캐쉬디렉토리에 저장한다.
-if file:
-    retriever = embed_file(file)
-    if retriever is None:
-      st.session_state["messages"] = []
-    else :
-      send_message("I'm ready! Ask away!", "ai", save=False)
-      paint_history()
-      message = st.chat_input("Ask anything about your file...")
+    with st.form("settings_form"):
+        quiz_title = st.text_input("퀴즈 제목")
+        st.session_state["quiz_title"] = quiz_title
+        quiz_count=st.slider("문항수를 선택하세요", 1,10,5)
+        st.session_state["quiz_count"] = quiz_count
+        quiz_difficulty=st.slider("난이도를 선택하세요", 1,10,3)
+        st.session_state["quiz_difficulty"] = quiz_difficulty
+        button = st.form_submit_button("퀴즈 만들기", use_container_width=True)
 
-      if message:
-          send_message(message, "human")
-          chain = (
-              {
-                  "context": retriever | RunnableLambda(format_docs),
-                  "question": RunnablePassthrough(),
-              }
-              | prompt
-              | llm
-          )
-          with st.chat_message("ai"):
-              response = invoke_chain(message)
-else:
-    st.session_state["messages"] = []
+    if(st.session_state["quiz_title"]):
+        try:
+            response = run_quiz_chain(
+                title = st.session_state["quiz_title"],
+                count =st.session_state["quiz_count"],
+                difficulty = st.session_state["quiz_difficulty"]
+            )
+        
+  
+            response = response.additional_kwargs["function_call"]["arguments"]
+            response = json.loads(response)
+            # st.write(response["questions"])
+
+            with st.form("questions_form"):
+                correct=0
+                for idx, question in enumerate(response["questions"]):
+                    st.write(f"{idx+1}.  ", question["question"])
+                    value = st.radio(
+                        f"Select an option",
+                        [answer["answer"] for answer in question["answers"]],
+                        key=f"{idx}_radio",
+                        index=None,
+                    )
+                    if {"answer": value, "correct": True} in question["answers"]:
+                        correct +=1
+                        st.success("Correct!")
+                    elif value is not None:
+                        st.error("Wrong")
+                st.form_submit_button("**:blue[제출하기]**", use_container_width=True)
+
+                st.write(correct)
+                if correct ==st.session_state["quiz_count"]:
+                    st.balloons()
+        except Exception as e:
+            st.error("Please Check API_KEY ")
+
+  
