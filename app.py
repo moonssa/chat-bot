@@ -53,8 +53,9 @@ with st.sidebar:
   st.divider()
   st.markdown(
   """
-    Github 
-    https://github.com/moonssa/chat-bot/commit/43b90af1913e183d7848a3f160358a36b6fcd2cd
+    Github Link
+    
+    https://github.com/moonssa/chat-bot/commit/039b215d177a5e6c8ba9510c8f929b7a94556d18
 """
 )
 
