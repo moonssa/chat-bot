@@ -5,7 +5,7 @@ from langchain.chat_models import ChatOpenAI
 from langchain.prompts import PromptTemplate
 from langchain.schema import BaseOutputParser, output_parser
 
-@st.cache_data(show_spinner="퀴즈를 맛있게 굽고 있어요...")
+@st.cache_data(show_spinner="퀴즈 생성중...")
 def run_quiz_chain(*, title, count,  difficulty):
     chain = prompt | llm
     return chain.invoke(
@@ -53,7 +53,8 @@ with st.sidebar:
   st.divider()
   st.markdown(
   """
-    Github Link
+    Github 
+    https://github.com/moonssa/chat-bot/commit/43b90af1913e183d7848a3f160358a36b6fcd2cd
 """
 )
 
