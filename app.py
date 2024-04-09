@@ -1,168 +1,189 @@
-import os
-import json
-import streamlit as st
+from langchain.document_loaders import SitemapLoader
+from langchain.schema.runnable import RunnableLambda, RunnablePassthrough
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.vectorstores.faiss import FAISS
+from langchain.embeddings import OpenAIEmbeddings
 from langchain.chat_models import ChatOpenAI
-from langchain.prompts import PromptTemplate
-from langchain.schema import BaseOutputParser, output_parser
+from langchain.prompts import ChatPromptTemplate
+import streamlit as st
 
-@st.cache_data(show_spinner="퀴즈 생성중...")
-def run_quiz_chain(*, title, count,  difficulty):
-    chain = prompt | llm
-    return chain.invoke(
+
+url = "https://developers.cloudflare.com/sitemap.xml"
+
+if "api_key" not in st.session_state:
+    st.session_state["api_key"] = None
+
+llm = ChatOpenAI(temperature=0.1, api_key=st.session_state["api_key"])
+
+answers_prompt = ChatPromptTemplate.from_template(
+    """
+    Using ONLY the following context answer the user's question. If you can't just say you don't know, don't make anything up.
+                                                  
+    Then, give a score to the answer between 0 and 5.
+
+    If the answer answers the user question the score should be high, else it should be low.
+
+    Make sure to always include the answer's score even if it's 0.
+
+    Context: {context}
+                                                  
+    Examples:
+                                                  
+    Question: How far away is the moon?
+    Answer: The moon is 384,400 km away.
+    Score: 5
+                                                  
+    Question: How far away is the sun?
+    Answer: I don't know
+    Score: 0
+                                                  
+    Your turn!
+
+    Question: {question}
+"""
+)
+
+
+def get_answers(inputs):
+    docs = inputs["docs"]
+    question = inputs["question"]
+    answers_chain = answers_prompt | llm
+
+    return {
+        "question": question,
+        "answers": [
+            {
+                "answer": answers_chain.invoke(
+                    {"question": question, "context": doc.page_content}
+                ).content,
+                "source": doc.metadata["source"],
+                "date": doc.metadata["lastmod"],
+            }
+            for doc in docs
+        ],
+    }
+
+
+choose_prompt = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            """
+            Use ONLY the following pre-existing answers to answer the user's question.
+
+            Use the answers that have the highest score (more helpful) and favor the most recent ones.
+
+            Cite sources and return the sources of the answers as they are, do not change them.
+
+            Answers: {answers}
+            """,
+        ),
+        ("human", "{question}"),
+    ]
+)
+
+
+def choose_answer(inputs):
+    answers = inputs["answers"]
+    question = inputs["question"]
+    choose_chain = choose_prompt | llm
+    condensed = "\n\n".join(
+        f"{answer['answer']}\nSource:{answer['source']}\nDate:{answer['date']}\n"
+        for answer in answers
+    )
+    return choose_chain.invoke(
         {
-            "quiz_title": title,
-            "quiz_count": count,
-            "quiz_difficulty": difficulty,
+            "question": question,
+            "answers": condensed,
         }
     )
 
 
+def parse_page(soup):
+    header = soup.find("header")
+    footer = soup.find("footer")
+    if header:
+        header.decompose()
+    if footer:
+        footer.decompose()
+    return (
+        str(soup.get_text())
+        .replace("\n", " ")
+        .replace("\xa0", " ")
+        .replace("CloseSearch Submit Blog", "")
+    )
+
+
+@st.cache_data(show_spinner="Loading website...")
+def load_website(url, api_key):
+    if st.session_state["api_key"]:
+        try:
+            splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+                chunk_size=1000,
+                chunk_overlap=200,
+            )
+            loader = SitemapLoader(
+                url,
+                filter_urls=[
+                    r"^(.*\/(ai-gateway|vectorize|workers-ai)\/).*",
+                ],
+                parsing_function=parse_page,
+            )
+            loader.requests_per_second = 2
+            docs = loader.load_and_split(text_splitter=splitter)
+            vector_store = FAISS.from_documents(
+                docs, OpenAIEmbeddings(api_key=st.session_state["api_key"])
+            )
+        except Exception as e:
+            st.error(f"{e} - Please Check API_KEY ")
+            st.session_state["api_key"] = None
+            return None
+        return vector_store.as_retriever()
+
+
 st.set_page_config(
-    page_title="QuizGPT| 챌린지",
-    page_icon="🎴",
+    page_title="SiteGPT",
+    page_icon="🖥️",
 )
 
-st.title(" QuizGPT ")
-with st.expander("과제 내용 보기", expanded=True):
-  st.markdown(
-        """
-  QuizGPT를 구현하되 다음 기능을 추가합니다:
 
-  - :white_check_mark: 함수 호출을 사용합니다.
-  - :white_check_mark: 유저가 시험의 난이도를 커스터마이징 할 수 있도록 하고 LLM이 어려운 문제 또는 쉬운 문제를 생성하도록 합니다.
-  - :white_check_mark: 만점이 아닌 경우 유저가 시험을 다시 치를 수 있도록 허용합니다.
-  - :white_check_mark: 만점이면 st.ballons를 사용합니다.
-  - :white_check_mark: 유저가 자체 OpenAI API 키를 사용하도록 허용하고, st.sidebar 내부의 st.input에서 로드합니다.
-  - :white_check_mark: st.sidebar를 사용하여 Streamlit app의 코드와 함께 Github 리포지토리에 링크를 넣습니다.
+st.markdown(
     """
-  )
-
-class JsonOutputParser(BaseOutputParser):
-    def parse(self, text):
-        text = text.replace("```", "").replace("json", "")
-        return json.loads(text)
-    
-output_parser = JsonOutputParser()
-
-api_key = st.sidebar.text_input("API KEY", type="password")
-st.session_state["api_key"] = api_key
-os.environ['OPENAI_API_KEY'] = api_key
-
-with st.sidebar:
-
-  st.divider()
-  st.markdown(
-  """
-    Github Link
-    
-    https://github.com/moonssa/chat-bot/commit/039b215d177a5e6c8ba9510c8f929b7a94556d18
+    # SiteGPT
+            
+    Ask questions about the content of a website.
+            
+    Start by writing the URL of the website on the sidebar.
 """
 )
 
-function = {
-  "name": "create_quiz", 
-  "description":"function that takes list of questions and answers and returns a quiz",
-  "parameters": {
-        "type": "object",
-        "properties": {
-            "questions": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "question": {
-                            "type": "string",
-                        },
-                        "answers": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "answer": {
-                                        "type": "string",
-                                    },
-                                    "correct": {
-                                        "type": "boolean",
-                                    },
-                                },
-                                "required": ["answer", "correct"],
-                            },
-                        },
-                    },
-                    "required": ["question", "answers"],
-                },
-            }
-        },
 
-        "required":["questions"],
-},
-}
+with st.sidebar:
+    api_key = st.text_input(":blue[OpenAI API_KEY]", type="password")
+    st.divider()
+    st.markdown(
+    """
+    Github Link
+    
+    https://github.com/moonssa/chat-bot/commit/039b215d177a5e6c8ba9510c8f929b7a94556d18
+    """
+)
 
 
+if api_key:
+    st.session_state["api_key"] = api_key
+    retriever = load_website(url, api_key)
 
-
-prompt = PromptTemplate.from_template("""Make a quiz about {quiz_title}
-                                      
-            Number of Questions: {quiz_count}
-            Difficulty Level: Level-{quiz_difficulty}/10""")
-
-st.session_state["quiz_title"]=None
-
-if not api_key:
-  st.error("⚠️  Please Enter Your :red[OpenAI API Key]")
-else:
-    llm = ChatOpenAI(temperature=0.1).bind(
-    function_call = {
-    "name": "create_quiz"
-    },
-    functions=[
-    function
-    ]
-    )
-
-    with st.form("settings_form"):
-        quiz_title = st.text_input("퀴즈 제목")
-        st.session_state["quiz_title"] = quiz_title
-        quiz_count=st.slider("문항수를 선택하세요", 1,10,5)
-        st.session_state["quiz_count"] = quiz_count
-        quiz_difficulty=st.slider("난이도를 선택하세요", 1,10,3)
-        st.session_state["quiz_difficulty"] = quiz_difficulty
-        button = st.form_submit_button("퀴즈 만들기", use_container_width=True)
-
-    if(st.session_state["quiz_title"]):
-        try:
-            response = run_quiz_chain(
-                title = st.session_state["quiz_title"],
-                count =st.session_state["quiz_count"],
-                difficulty = st.session_state["quiz_difficulty"]
+    if retriever is not None:
+        query = st.text_input("Ask a question to the website.")
+        if query:
+            chain = (
+                {
+                    "docs": retriever,
+                    "question": RunnablePassthrough(),
+                }
+                | RunnableLambda(get_answers)
+                | RunnableLambda(choose_answer)
             )
-        
-  
-            response = response.additional_kwargs["function_call"]["arguments"]
-            response = json.loads(response)
-            # st.write(response["questions"])
-
-            with st.form("questions_form"):
-                correct=0
-                for idx, question in enumerate(response["questions"]):
-                    st.write(f"{idx+1}.  ", question["question"])
-                    value = st.radio(
-                        f"Select an option",
-                        [answer["answer"] for answer in question["answers"]],
-                        key=f"{idx}_radio",
-                        index=None,
-                    )
-                    if {"answer": value, "correct": True} in question["answers"]:
-                        correct +=1
-                        st.success("Correct!")
-                    elif value is not None:
-                        st.error("Wrong")
-                st.form_submit_button("**:blue[제출하기]**", use_container_width=True)
-
-                st.write(correct)
-                if correct ==st.session_state["quiz_count"]:
-                    st.balloons()
-        except Exception as e:
-            st.error("Please Check API_KEY ")
-
-  
+            result = chain.invoke(query)
+            st.markdown(result.content.replace("$", "\$"))
