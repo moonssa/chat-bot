@@ -165,7 +165,7 @@ with st.sidebar:
     """
     Github Link
     
-    https://github.com/moonssa/chat-bot/commit/039b215d177a5e6c8ba9510c8f929b7a94556d18
+    https://github.com/moonssa/chat-bot/commit/f302071eb82f49adfe3e88066f0358d6a79dcc8d
     """
 )
 
