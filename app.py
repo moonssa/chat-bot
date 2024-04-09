@@ -6,14 +6,14 @@ from langchain.embeddings import OpenAIEmbeddings
 from langchain.chat_models import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 import streamlit as st
-
+import os
 
 url = "https://developers.cloudflare.com/sitemap.xml"
 
 if "api_key" not in st.session_state:
     st.session_state["api_key"] = None
 
-llm = ChatOpenAI(temperature=0.1, api_key=st.session_state["api_key"])
+
 
 answers_prompt = ChatPromptTemplate.from_template(
     """
@@ -172,7 +172,10 @@ with st.sidebar:
 
 if api_key:
     st.session_state["api_key"] = api_key
+    os.environ['OPENAI_API_KEY'] = api_key
     retriever = load_website(url, api_key)
+
+    llm = ChatOpenAI(temperature=0.1)
 
     if retriever is not None:
         query = st.text_input("Ask a question to the website.")
